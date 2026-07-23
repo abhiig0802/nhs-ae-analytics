@@ -192,7 +192,7 @@ With only 24 monthly data points, deep learning models would massively overfit. 
 
 Built by **ABHIRAM GADIKOTA** — MSc Data Science, Cardiff University.  
 Dissertation: machine learning for financial market volatility forecasting.  
-Currently looking for data analyst and data science roles in Cardiff and all over UK.
+Currently looking for data analyst and data science roles in Cardiff and across the UK.
 
  Open to opportunities - feel free to reach out via GitHub.
 
