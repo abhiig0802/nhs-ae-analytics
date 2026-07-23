@@ -63,10 +63,10 @@ These findings came out of the EDA and modelling - none of them were assumed goi
 nhs-ae-analytics/
 │
 ├── code-files/
-│   ├── Data cleaning.ipynb          # Load, clean and save 24 months of NHS data
+│   ├── Data cleaning.ipynb          # Load, clean and save 24 months of NHS data 
 │   ├── EDA.ipynb                    # 5 exploratory charts - performance, seasonality, regions
-│   ├── feature engineering model.ipynb   # ML pipeline - RF, XGBoost, SHAP
-│   └── attendance forecasting.ipynb      # SARIMA time series model
+│   ├── feature engineering model.ipynb   # ML pipeline - RF, XGBoost, SHAP (project 1)
+│   └── attendance forecasting.ipynb      # SARIMA time series model (project 2)
 │
 ├── data/
 │   ├── raw/                         # 24 original NHS England CSV files
