@@ -1,6 +1,6 @@
-# NHS A&E Analytics — Breach Risk Prediction & Attendance Forecasting
+# NHS A&E Analytics - Breach Risk Prediction & Attendance Forecasting
 
-> *Predicting which NHS trusts are at risk of breaching the 4-hour A&E target — before it happens.*
+> *Predicting which NHS providers are at risk of breaching the 4-hour A&E target - before it happens.*
 
 ![Python](https://img.shields.io/badge/Python-3.12-blue?style=flat&logo=python)
 ![scikit-learn](https://img.shields.io/badge/scikit--learn-ML-orange?style=flat&logo=scikit-learn)
@@ -15,9 +15,9 @@
 
 The NHS has a target that 95% of A&E patients should be seen, treated, and either admitted or discharged within 4 hours of arrival. That target hasn't been met nationally since **July 2015** - nearly a decade.
 
-The problem isn't that NHS managers don't care. It's that they only learn a trust has failed the target *after* the month closes, when it's too late to act. No early warning, no time to respond.
+Individual trusts track their own four-hour performance in real time. What arrives late is the *national* picture: NHS England publishes on the second Thursday of the following month, so by the time providers can be compared against one another, the month you would have wanted to act on has already closed.
 
-Using two years of NHS England open data, I built two models: a classifier that flags which trusts are at risk of breaching next month, and a forecaster that projects how many patients are expected to arrive. Together they offer the one thing operational teams currently don't have - **lead time**.
+Using two years of NHS England open data, I built two models: a classifier that flags which providers are at risk of breaching next month, and a forecaster that projects how many patients are expected to arrive. Together they offer the one thing a cross-provider view currently doesn't have - **lead time**.
 
 ---
 
@@ -27,7 +27,7 @@ Using two years of NHS England open data, I built two models: a classifier that 
 |---|---|---|
 | Task | Binary classification | Time series forecasting |
 | Model | **XGBoost** (vs Random Forest baseline) | **SARIMA** (0,0,0)(0,0,1)[12] |
-| Headline metric | **ROC-AUC 0.818** | **MAPE 3.7%** |
+| Headline metric | **ROC-AUC 0.819** | **MAPE 3.7%** |
 | Test window | Jan – Mar 2026 | Jan – Mar 2026 |
 | Explainability | SHAP values | Seasonal decomposition |
 
@@ -35,7 +35,9 @@ Using two years of NHS England open data, I built two models: a classifier that 
 
 ## The data
 
-24 monthly CSV files from NHS England, April 2024 to March 2026, cleaned into **4,475 trust-month records across 203 trusts**.
+24 monthly CSV files from NHS England, April 2024 to March 2026, cleaned into **4,475 provider-month records across 203 providers**.
+
+A note on terminology: the NHS England collection covers NHS trusts, foundation trusts *and* independent-sector organisations such as walk-in centres and community interest companies. A number of them are independent-sector organisations such as walk-in centres and community interest companies rather than NHS trusts. Monthly totals therefore run slightly below NHS England's published national figures and should not be read as national totals.
 
 Against the official 95% standard, the breach rate across the whole dataset is **68.9%** - which is precisely why the modelling uses a different threshold (see design decisions below).
 
@@ -44,47 +46,50 @@ Against the official 95% standard, the breach rate across the whole dataset is *
 | Months | Use |
 |---|---|
 | Apr 2024 | Consumed by lag features — no prior month to draw from |
-| May 2024 – Dec 2025 | Training — 874 rows |
-| Jan 2026 – Mar 2026 | Test — 134 rows |
+| May 2024 - Dec 2025 | Training - 834 rows |
+| Jan 2026 - Mar 2026 | Test - 126 rows |
 
-The split is strictly temporal. The model is never shown a future month during training, which is the only honest way to evaluate a forecasting-style problem.
+The split is strictly temporal. The model is never shown a future month during training, which is the only honest way to evaluate a forecasting-style problem. The provider-selection step below is also computed on the training period alone, so no test-window outcome influences which providers enter the study.
 
 ---
 
-## Project 1 — A&E Breach Risk Predictor
+## Project 1 - A&E Breach Risk Predictor
 
-**Question:** *Will this trust fall below the 75% performance threshold next month?*
+**Question:** *Will this provider fall below the 75% performance threshold next month?*
 
 ### Features
 
-15 features across three groups:
+8 features across two groups:
 
-- **Current-month operational metrics** - total attendances, emergency admissions, admission rate, 12-hour wait rate, type-1 share
 - **Seasonality flags** - `is_winter` (Dec/Jan/Feb), `is_summer` (Jun/Jul/Aug), calendar month
-- **One-month lags** - previous month's attendances, admission rate, 12-hour wait rate, type-1 share and emergency admissions, computed per trust
+- **One-month lags** - previous month's attendances, admission rate, 12-hour wait rate, type-1 share and emergency admissions, computed per provider
+
+Current-month operational metrics are deliberately excluded. They arrive in the same NHS publication as the target, so a model using them would be describing a month that had already closed rather than forecasting one still open. Every feature is either known in advance (the calendar) or lagged by a month.
 
 ### Model comparison
 
 | Metric | Random Forest | XGBoost *(selected)* |
 |---|---|---|
-| ROC-AUC | 0.792 | **0.818** |
-| Accuracy | 0.72 | **0.75** |
-| Precision (breach) | 0.68 | 0.70 |
-| Recall (breach) | 0.90 | **0.92** |
-| F1 (breach) | 0.77 | **0.80** |
+| ROC-AUC | 0.796 | **0.819** |
+| Accuracy | 0.68 | **0.72** |
+| Precision (breach) | 0.64 | **0.67** |
+| Recall (breach) | 0.93 | **0.93** |
+| F1 (breach) | 0.76 | **0.78** |
 
-### Confusion matrix — XGBoost, 134 test rows
+The two models sit close enough that the gap is inside the noise of a 126-row test set. XGBoost is reported as selected; SHAP attribution is computed on the Random Forest.
+
+### Confusion matrix - XGBoost, 126 test rows
 
 | | Predicted no breach | Predicted breach |
 |---|---|---|
-| **Actual no breach** | 34 | 28 |
-| **Actual breach** | 6 | 66 |
+| **Actual no breach** | 29 | 30 |
+| **Actual breach** | 5 | 62 |
 
-The model catches 66 of 72 actual breaches and misses 6, at the cost of 28 false alarms. That trade-off is deliberate,in an early-warning context, investigating a trust that turns out fine costs a meeting, while missing a deteriorating trust costs patient waiting time.
+The model catches 62 of 67 actual breaches and misses 5, at the cost of 30 false alarms. That trade-off is deliberate, in an early-warning context, investigating a provider that turns out fine costs a meeting, while missing a deteriorating provider costs patient waiting time.
 
 ---
 
-## Project 2 — A&E Attendance Forecaster
+## Project 2 - A&E Attendance Forecaster
 
 **Question:** *How many patients are coming next month?*
 
@@ -99,21 +104,21 @@ The model catches 66 of 72 actual breaches and misses 6, at the cost of 28 false
 | RMSE | 83,873 patients |
 | MAPE | **3.7%** |
 
-An average error of ~80,000 patients sounds large until you set it against a national monthly baseline of roughly 2.2 million attendances.
+An average error of ~80,000 patients sounds large until you set it against a monthly baseline of roughly 2.2 million attendances across the 203 providers in this dataset.
+
+Worth reading the selected order carefully: no autoregressive terms, no differencing, one seasonal MA term. That is a constant with a damped seasonal adjustment, not a structural model of demand, which is the honest conclusion to draw from 21 observations against a 12-month cycle.
 
 ---
 
 ## What the data revealed
 
-- **The 95% target is effectively dead.** Nearly seven in ten trust-months breach it. The useful operational question is no longer "will they breach?" but "how badly, and who next?"
+- **The 95% target no longer discriminates between providers.** Nearly seven in ten provider-months breach it. The useful operational question is no longer "will they breach?" but "how badly, and who next?"
 
-- **Winter is the strongest driver of breach risk.** December, January and February raise breach probability materially, confirmed independently by SHAP importance and by the seasonal decomposition. The model wasn't told this; it learned it.
+- **Seasonality dominates everything operational.** The three calendar features together carry roughly five times the mean SHAP weight of the strongest operational metric. The single best predictor of next month's breach risk is what time of year it is. The winter signal was supplied to the model as an engineered flag; what the model learned is how strongly it predicts breaches.
 
-- **Admissions matter more than raw volume.** Admission rate outranked total attendances in SHAP importance. When wards are full and patients can't move out of A&E, the department backs up. This is the bed-blocking signal, and it shows up clearly in the feature importances.
+- **No single operational metric stands out.** Previous-month 12-hour waits (0.036), admission rate (0.035) and attendance volume (0.031) land within 0.005 of each other on mean SHAP. 12-hour waits edge ahead in most runs but not all, across ten random seeds the ordering flipped twice. With 24 months of data these should be treated as comparable rather than ranked.
 
-- **12-hour waits are a leading indicator.** Trusts already showing elevated 12-hour wait rates are more likely to breach the following month. This is the most operationally actionable finding — monitor 12-hour waits as an early-warning metric rather than a lagging one.
-
-- **Attendance is strongly seasonal, with no reliable trend over 24 months.** February dips in both years (2.01M in 2025, 2.04M in 2026); March peaks (2.30M, 2.35M). Notably, automated order selection settled on a seasonal-MA model around a constant mean rather than a trending one,with 21 training observations there simply isn't evidence to claim a structural rise in demand.
+- **Attendance is strongly seasonal, with no reliable trend over 24 months.** February dips in both years (2.01M in 2025, 2.04M in 2026); March peaks (2.30M, 2.35M). Notably, automated order selection settled on a seasonal-MA model around a constant mean rather than a trending one. with 21 training observations there simply isn't evidence to claim a structural rise in demand.
 
 ---
 
@@ -141,19 +146,23 @@ An average error of ~80,000 patients sounds large until you set it against a nat
 These choices came out of the data rather than being assumed at the start, and they're the ones worth questioning.
 
 **Why a 75% breach threshold, not the official 95%?**
-At 95%, the overwhelming majority of trust-months are breaches. there is almost nothing to predict, and a classifier would simply memorise trust identity. A 75% threshold is still clinically meaningful (one in four patients waiting over four hours) and produces genuine month-to-month variation. At this threshold the overall breach rate is 46.6%, a workable class balance.
+At 95%, the overwhelming majority of provider-months are breaches. There is almost nothing to predict, and a classifier would simply memorise provider identity. A 75% threshold is still clinically meaningful (one in four patients waiting over four hours) and produces genuine month-to-month variation. At this threshold the overall breach rate is 46.6%, a workable class balance. It also sits close to the 78% interim minimum standard NHS England set for March 2026 in the Urgent and Emergency Care Plan, though see the limitations below on how that should and shouldn't be read.
 
-**Why filter to 48 trusts?**
-After setting the 75% threshold, I checked trust-level consistency. 50 trusts breach every month, 83 never breach,leaving 48 genuinely uncertain trusts where prediction has value. Training on always-breaching and never-breaching trusts inflates the AUC artificially. The honest 0.77 from 48 uncertain trusts is worth more than a dishonest 0.99 from all 203.
+**Why filter to 45 providers?**
+After setting the 75% threshold, I checked provider-level consistency across the training period. Of the 200 providers present in the training period, 66 breach in more than 90% of months and 89 in fewer than 10%, leaving 45 where the outcome is genuinely uncertain. Training on the consistently-failing and consistently-passing providers would inflate AUC by letting the classifier memorise provider identity rather than learn conditions. Restricting to the 45 uncertain providers gives 0.819.
 
+The filter is computed on training-period outcomes only. Computing it across all 24 months would let the January–March 2026 results influence which providers enter the study, which is a subtle form of selection on the target.
+
+**Why exclude current-month features?**
+The target and the current-month operational metrics arrive in the same NHS publication on the same day. A model using December's attendances to predict December's breach could not be run until December's answer was already public. Restricting to calendar features and one-month lags costs very little in performance, and it is what makes the month-ahead framing honest.
 **Why a one-month lag rather than a longer window?**
-Lag features cost you data at the start of the series: with `shift(1)`, April 2024 has no prior month and is dropped, removing 48 rows. A three-month window would discard three months instead of one. A longer window captures whether a trust is *deteriorating over time* rather than having one bad month, so there's a real trade-off between trend signal and training volume. On this dataset the one-month lag scored higher, but with a longer series the answer could reverse.
+Lag features cost you data at the start of the series: with `shift(1)`, April 2024 has no prior month and is dropped. A three-month window would discard three months instead of one. A longer window captures whether a provider is *deteriorating over time* rather than having one bad month, so there's a real trade-off between trend signal and training volume. On this dataset the one-month lag scored higher, but with a longer series the answer could reverse.
 
 **Why SARIMA rather than an LSTM?**
 With only 24 monthly data points, deep learning models would massively overfit. SARIMA is specifically designed for short seasonal time series. It's the right tool for this data, not a fallback.
 
 **Why optimise for recall over precision?**
-See the confusion matrix above,the asymmetry between a missed breach and a false alarm is real, and the threshold reflects it.
+See the confusion matrix above, the asymmetry between a missed breach and a false alarm is real, and the threshold reflects it.
 
 ---
 
@@ -161,11 +170,13 @@ See the confusion matrix above,the asymmetry between a missed breach and a false
 
 Stated openly, because they'd come up in any serious review:
 
-- **24 months is a short series.** The forecaster trains on 21 observations, which limits how much seasonal structure can be estimated and rules out trend claims.
-- **The 75% threshold is a modelling choice, not an NHS standard.** It was chosen for statistical tractability and should be described that way, never as a clinical target.
-- **Filtering to 48 trusts narrows generalisability.** The classifier is calibrated for trusts near the decision boundary; it says nothing useful about consistently strong or consistently failing trusts.
-- **A single 3-month test window.** No walk-forward cross-validation across multiple temporal folds, so the reported AUC carries meaningful variance.
-- **Correlation, not causation.** SHAP shows what the model relies on, not what would happen if a trust intervened on those variables.
+- **24 months is a short series.** The forecaster trains on 21 observations, which limits how much seasonal structure can be estimated and rules out trend claims. Extending the series back to 2022 is the highest-value next step.
+- **The 75% threshold is a modelling choice.** It was selected for statistical tractability, though it sits close to the 78% interim minimum standard NHS England set for March 2026. It is not itself an NHS standard and should not be read as a clinical target.
+- **Filtering to 45 providers narrows generalisability.** The classifier is calibrated for providers near the decision boundary; it says nothing useful about consistently strong or consistently failing providers.
+- **A single 3-month test window.** 126 evaluation rows, no walk-forward cross-validation across multiple temporal folds, so the reported AUC carries meaningful variance and should not be read to three decimal places.
+- **Correlated seasonal features.** `month`, `is_winter` and `is_summer` encode overlapping signal, so SHAP splits credit among them and the true seasonal weight is their sum rather than any one bar. `month` is also numerically encoded, placing December and January at opposite ends of the scale despite being adjacent seasons. cyclical encoding is a planned improvement.
+- **Provider coverage.** The 203 providers include walk-in centres and community interest companies alongside NHS trusts. Monthly totals run below NHS England's published national figures and should not be read as national totals.
+- **Correlation, not causation.** SHAP shows what the model relies on, not what would happen if a provider intervened on those variables.
 
 ---
 
@@ -183,8 +194,8 @@ nhs-ae-analytics/
 ├── data/
 │   ├── raw/                               # 24 original NHS England CSV files
 │   └── cleaned/
-│       ├── ae_clean.csv                   # Cleaned dataset - 4,475 rows, 203 trusts
-│       └── model_predictions.csv          # Trust-level breach predictions, Jan-Mar 2026
+│       ├── ae_clean.csv                   # Cleaned dataset - 4,475 rows, 203 providers
+│       └── model_predictions.csv          # Provider-level breach predictions, Jan-Mar 2026
 │
 ├── output-files/                          # 12 generated charts (01-12)
 │
@@ -199,11 +210,13 @@ nhs-ae-analytics/
 |---|---|
 | Language | Python 3.12 |
 | Data processing | pandas, numpy |
-| Machine learning | scikit-learn, xgboost, imbalanced-learn |
+| Machine learning | scikit-learn, xgboost |
 | Explainability | shap |
 | Time series | statsmodels, pmdarima |
 | Visualisation | matplotlib, seaborn |
 | Data source | NHS England open data (public) |
+
+Class imbalance is handled inside the estimators - `class_weight='balanced'` for the Random Forest and `scale_pos_weight` for XGBoost - rather than by resampling.
 
 ---
 
@@ -217,7 +230,7 @@ cd nhs-ae-analytics
 
 **2. Install dependencies**
 ```bash
-pip install pandas numpy matplotlib seaborn scikit-learn xgboost imbalanced-learn shap statsmodels pmdarima openpyxl
+pip install pandas numpy matplotlib seaborn scikit-learn xgboost shap statsmodels pmdarima openpyxl
 ```
 
 **3. Run the notebooks in order**
